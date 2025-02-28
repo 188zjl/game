@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>怪物射击游戏 - 技能拓展&懒人模式</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background: #333;
+        }
+        /* 美化开始游戏前界面 */
+        #preGameScreen, #gameOverScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            /* 简易渐变，增强视觉 */
+            background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), rgba(60, 60, 60, 0.8));
+            color: white;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+        #preGameScreen select, #preGameScreen button {
+            font-size: 18px;
+            margin: 5px;
+            padding: 5px 10px;
+        }
+        #gameOverScreen {
+            display: none;
+        }
+        #preGameScreen h2 {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="preGameScreen">
+        <h2>请选择角色颜色</h2>
+        <select id="colorSelect">
+            <option value="red">红</option>
+            <option value="blue" selected>蓝</option>
+            <option value="white">白</option>
+            <option value="pink">粉</option>
+            <option value="yellow">黄</option>
+        </select>
+        <h2>请选择角色形状</h2>
+        <select id="shapeSelect">
+            <option value="triangle">三角形</option>
+            <option value="square">方形</option>
+            <option value="pentagon" selected>五边形</option>
+            <option value="star">实五角星</option>
+            <option value="triangleStar">三角星</option>
+            <option value="smile">笑脸球形</option>
+            <option value="cry">哭脸球形</option>
+        </select>
+        <label>
+            <input type="checkbox" id="lazyModeCheck" />
+            懒人模式（技能1/2/3仍可用，但空格改为自动追踪子弹）
+        </label>
+        <button id="confirmButton">确认并开始游戏</button>
+    </div>
+
+    <div id="gameOverScreen">
+        <p>你已经死亡</p>
+        <p>点击重新开始或选择复活</p>
+        <button id="restartButton">重新开始</button>
+        <button id="reviveButton">复活再战</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const preGameScreen = document.getElementById('preGameScreen');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const confirmButton = document.getElementById('confirmButton');
+        const restartButton = document.getElementById('restartButton');
+        const reviveButton = document.getElementById('reviveButton');
+        const colorSelect = document.getElementById('colorSelect');
+        const shapeSelect = document.getElementById('shapeSelect');
+        const lazyModeCheck = document.getElementById('lazyModeCheck');
+
+        // ===========================
+        // 全局变量
+        // ===========================
+        let player, bullets, monsters, orbitingMonsters, items, particleEffects;
+        let tornadoes;   // 存放技能3生成的旋风
+        let gameInterval, spawnInterval, bulletRecoveryInterval;
+
+        // 技能1: 护盾 + 无敌 + 加速
+        let skill1Active = false;
+        let skill1EndTime = 0;
+        const SKILL1_DURATION = 3000;  // 3秒
+        const SKILL1_COOLDOWN = 20000; // 20秒
+        let skill1Cooldown = 0;
+
+        // 技能2: 大变身(体型x5 + 无敌 + 撞怪)
+        let skill2Active = false;
+        let skill2EndTime = 0;
+        const SKILL2_DURATION = 5000;   // 5秒
+        const SKILL2_COOLDOWN = 25000;  // 25秒
+        let skill2Cooldown = 0;
+
+        // 技能3: 龙卷风(吸引怪物)
+        const SKILL3_COOLDOWN = 25000;  // 25秒
+        let skill3Cooldown = 0; 
+        // 龙卷风持续时间
+        const TORNADO_DURATION = 5000; // 5秒
+        // 龙卷风牵引力(适当调大/调小来控制吸力)
+        const TORNADO_PULL_FORCE = 0.5;
+        // 每个龙卷风需要记录：x,y,开始时间
+
+        // 其他状态
+        let skillHintStartTime = 0;  
+        let skillHintDisplayed = false; 
+        let exclamationEndTime = 0;  // 当血量低时，显示“!”的截止时间（悬停1秒）
+        let lazyMode = false;        // 是否为懒人模式
+        let lastMouseX = 0;          // 记录鼠标位置（若需要朝鼠标方向开火等）
+
+        // ===========================
+        // 常量 / 参数
+        // ===========================
+        // 基础属性
+        const BASE_PLAYER_RADIUS = 20;
+        const BASE_PLAYER_SPEED = 5;
+
+        // 子弹
+        const BULLET_SPEED = 5;
+        const MAX_BULLETS = 50;
+        const BULLET_LIFE_DECREASE_ON_HIT = 1;
+        const BULLET_BOUNCE_ACCEL = 1.05;
+        const BULLET_RADIUS = 5;
+        // 让子弹可以穿透2个敌人
+        const BULLET_MAX_PENETRATION = 2;
+
+        // 怪物
+        const MONSTER_RADIUS = 20;
+        const BOMB_EXPLOSION_RADIUS = 40;
+
+        // 刷怪数值
+        let monsterSpeedMultiplier = 1;
+        const DIFFICULTY_INCREASE_RATE = 20;  // 每多少分提升一次难度
+        // 大幅减少初始数量 & 成长系数
+        const baseNumberOfMonsters = 1;
+        const monsterSpawnGrowth = 1.15; // 原先1.2 -> 1.05
+
+        // 提升难度时，怪物移速成长系数从1.2 改为1.1
+        const MONSTER_SPEED_GROWTH = 1.15;
+
+        // 子弹自动回复
+        const INITIAL_BULLET_RECOVERY_RATE = 2.5; // 可以自定义
+
+        // 粒子特效配置
+        const PARTICLE_COUNT = 15;
+        const PARTICLE_LIFESPAN = 30;
+
+        // ===========================
+        // 主角皮肤颜色、形状
+        // ===========================
+        let playerColor = 'blue';   
+        let playerShape = 'pentagon';
+
+        // ===========================
+        // UI事件
+        // ===========================
+        confirmButton.addEventListener('click', () => {
+            playerColor = colorSelect.value;
+            playerShape = shapeSelect.value;
+            lazyMode = lazyModeCheck.checked;
+
+            preGameScreen.style.display = 'none';
+            startGame();
+        });
+        restartButton.addEventListener('click', startGame);
+        reviveButton.addEventListener('click', revivePlayer);
+
+        // 记录鼠标位置
+        window.addEventListener('mousemove', (e) => {
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+        });
+
+        // ===========================
+        // 键盘事件
+        // ===========================
+        const keyState = {};
+        window.addEventListener('keydown', (e) => {
+            keyState[e.key] = true;
+
+            // 懒人模式下，空格发射“追踪弹”；否则空格不做技能，只在你想加功能时可再扩展。
+            if (e.key === ' ' || e.key === 'Spacebar') {
+                e.preventDefault();
+                if (lazyMode) {
+                    shootHomingBullets();
+                }
+            }
+
+            // 技能1 (按 1) - LV >= 1
+            if (e.key === '1') {
+                attemptUseSkill1();
+            }
+            // 技能2 (按 2) - LV >= 2
+            if (e.key === '2') {
+                attemptUseSkill2();
+            }
+            // 技能3 (按 3) - LV >= 3
+            if (e.key === '3') {
+                attemptUseSkill3();
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            keyState[e.key] = false;
+        });
+
+        // ===========================
+        // 鼠标点击：发射普通子弹（一次两发）
+        // ===========================
+        canvas.addEventListener('click', (e) => {
+            const angle = Math.atan2(e.clientY - player.y, e.clientX - player.x);
+            fireTwoBullets(angle, false);
+        });
+
+        // ===========================
+        // 函数：初始化 / 开始 / 结束
+        // ===========================
+        function initializeGame() {
+            player = {
+                x: canvas.width / 2,
+                y: canvas.height / 2,
+                radius: BASE_PLAYER_RADIUS,
+                currentRadius: BASE_PLAYER_RADIUS,
+                speed: BASE_PLAYER_SPEED,
+                currentSpeed: BASE_PLAYER_SPEED,
+
+                health: 5,
+                maxHealth: 5,
+                score: 0,
+                level: 1,
+
+                bullets: 50,
+                lifesteal: 0.02,
+                lives: 1,
+                invincible: false,
+            };
+
+            bullets = [];
+            monsters = [];
+            orbitingMonsters = [];
+            items = [];
+            particleEffects = [];
+            tornadoes = [];
+
+            monsterSpeedMultiplier = 1;
+
+            skill1Active = false;
+            skill1Cooldown = 0;
+            skill2Active = false;
+            skill2Cooldown = 0;
+            skill3Cooldown = 0;
+
+            skillHintStartTime = Date.now();
+            skillHintDisplayed = false;
+            exclamationEndTime = 0;
+        }
+
+        function startGame() {
+            initializeGame();
+            gameOverScreen.style.display = 'none';
+            startIntervals();
+        }
+
+        function startIntervals() {
+            gameInterval = setInterval(updateGame, 20);
+
+            spawnInterval = setInterval(() => {
+                spawnMonsters();
+                spawnPotion();
+            }, 1000);
+
+            bulletRecoveryInterval = setInterval(recoverBullets, 1000);
+        }
+
+        function stopIntervals() {
+            clearInterval(gameInterval);
+            clearInterval(spawnInterval);
+            clearInterval(bulletRecoveryInterval);
+        }
+
+        function gameOver() {
+            stopIntervals();
+            gameOverScreen.style.display = 'flex';
+        }
+
+        function revivePlayer() {
+            if (player.lives > 0) {
+                player.lives--;
+                player.maxHealth = Math.max(1, player.maxHealth - 1);
+                player.health = player.maxHealth;
+                gameOverScreen.style.display = 'none';
+                startIntervals();
+            } else {
+                gameOver();
+            }
+        }
+
+        // ===========================
+        // 核心循环
+        // ===========================
+        function updateGame() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            movePlayer();
+            drawPlayer();
+
+            updateBullets();
+            drawBullets();
+
+            updateMonsters();
+            drawMonsters();
+
+            updateOrbitingMonsters();
+            drawOrbitingMonsters();
+
+            updateItems();
+            drawItems();
+
+            updateSkill1();  // 护盾
+            drawSkill1Barrier();
+
+            updateSkill2();  // 大变身
+            updateTornadoes(); // 技能3：龙卷风
+            drawTornadoes();
+
+            updateParticleEffects();
+            drawParticleEffects();
+
+            updateSkillCooldowns();
+            drawHUD();
+        }
+
+        // ===========================
+        // 玩家移动 & 绘制
+        // ===========================
+        function movePlayer() {
+            if (keyState['ArrowUp']) {
+                player.y -= player.currentSpeed;
+            }
+            if (keyState['ArrowDown']) {
+                player.y += player.currentSpeed;
+            }
+            if (keyState['ArrowLeft']) {
+                player.x -= player.currentSpeed;
+            }
+            if (keyState['ArrowRight']) {
+                player.x += player.currentSpeed;
+            }
+            // 越界传送
+            if (player.x < 0) {
+                player.x = canvas.width;
+            } else if (player.x > canvas.width) {
+                player.x = 0;
+            }
+            if (player.y < 0) {
+                player.y = canvas.height;
+            } else if (player.y > canvas.height) {
+                player.y = 0;
+            }
+        }
+
+        function drawPlayer() {
+            ctx.save();
+            ctx.fillStyle = playerColor;
+            switch (playerShape) {
+                case 'triangle':
+                    drawTriangle(ctx, player.x, player.y, player.currentRadius);
+                    break;
+                case 'square':
+                    drawSquare(ctx, player.x, player.y, player.currentRadius);
+                    break;
+                case 'pentagon':
+                    drawPentagon(ctx, player.x, player.y, player.currentRadius);
+                    break;
+                case 'star':
+                    drawStar(ctx, player.x, player.y, player.currentRadius);
+                    break;
+                case 'triangleStar':
+                    drawTriangleStar(ctx, player.x, player.y, player.currentRadius);
+                    break;
+                case 'smile':
+                    drawSmileFace(ctx, player.x, player.y, player.currentRadius);
+                    break;
+                case 'cry':
+                    drawCryFace(ctx, player.x, player.y, player.currentRadius);
+                    break;
+            }
+            ctx.restore();
+
+            // 显示“!”提示
+            if (Date.now() < exclamationEndTime) {
+                ctx.save();
+                ctx.fillStyle = 'yellow';
+                ctx.font = 'bold 28px Arial';
+                ctx.fillText('!', player.x - 5, player.y - player.currentRadius - 10);
+                ctx.restore();
+            }
+        }
+
+        // ========== 不同形状的简单绘制函数 ==========
+        function drawTriangle(ctx, x, y, r) {
+            ctx.beginPath();
+            ctx.moveTo(x, y - r);
+            ctx.lineTo(x - r, y + r);
+            ctx.lineTo(x + r, y + r);
+            ctx.closePath();
+            ctx.fill();
+        }
+        function drawSquare(ctx, x, y, r) {
+            ctx.beginPath();
+            ctx.rect(x - r, y - r, 2*r, 2*r);
+            ctx.fill();
+        }
+        function drawPentagon(ctx, x, y, r) {
+            const sides = 5;
+            const angle = (2 * Math.PI) / sides;
+            ctx.beginPath();
+            for (let i = 0; i < sides; i++) {
+                const px = x + r * Math.cos(angle * i - Math.PI / 2);
+                const py = y + r * Math.sin(angle * i - Math.PI / 2);
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+        }
+        function drawStar(ctx, x, y, r) {
+            const spikes = 5;
+            const outerRadius = r;
+            const innerRadius = r * 0.5;
+            let rot = Math.PI / 2 * 3;
+            const step = Math.PI / spikes;
+
+            ctx.beginPath();
+            ctx.moveTo(x, y - outerRadius);
+            for (let i = 0; i < spikes; i++) {
+                let xPos = x + Math.cos(rot) * outerRadius;
+                let yPos = y + Math.sin(rot) * outerRadius;
+                ctx.lineTo(xPos, yPos);
+                rot += step;
+
+                xPos = x + Math.cos(rot) * innerRadius;
+                yPos = y + Math.sin(rot) * innerRadius;
+                ctx.lineTo(xPos, yPos);
+                rot += step;
+            }
+            ctx.lineTo(x, y - outerRadius);
+            ctx.closePath();
+            ctx.fill();
+        }
+        function drawTriangleStar(ctx, x, y, r) {
+            const spikes = 3;
+            const outerRadius = r;
+            const innerRadius = r * 0.4;
+            let rot = Math.PI / 2 * 3;
+            const step = Math.PI / spikes;
+
+            ctx.beginPath();
+            ctx.moveTo(x, y - outerRadius);
+            for (let i = 0; i < spikes; i++) {
+                let xPos = x + Math.cos(rot) * outerRadius;
+                let yPos = y + Math.sin(rot) * outerRadius;
+                ctx.lineTo(xPos, yPos);
+                rot += step;
+
+                xPos = x + Math.cos(rot) * innerRadius;
+                let yPos2 = y + Math.sin(rot) * innerRadius;
+                ctx.lineTo(xPos, yPos2);
+                rot += step;
+            }
+            ctx.lineTo(x, y - outerRadius);
+            ctx.closePath();
+            ctx.fill();
+        }
+        function drawSmileFace(ctx, x, y, r) {
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(x - r/3, y - r/3, r/6, 0, Math.PI * 2);
+            ctx.arc(x + r/3, y - r/3, r/6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.arc(x, y, r/2, 0, Math.PI, false);
+            ctx.stroke();
+        }
+        function drawCryFace(ctx, x, y, r) {
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(x - r/3, y - r/3, r/6, 0, Math.PI * 2);
+            ctx.arc(x + r/3, y - r/3, r/6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.arc(x, y + r/2, r/2, Math.PI, 0, true); 
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.fillStyle = 'skyblue';
+            ctx.arc(x - r/3, y - r/3 + r/2, r/8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // ===========================
+        // 子弹：拥有2次贯穿、可边界反弹
+        // ===========================
+        function fireBullet(angle, isHoming) {
+            if (player.bullets <= 0) return;
+            bullets.push({
+                x: player.x,
+                y: player.y,
+                vx: Math.cos(angle) * BULLET_SPEED,
+                vy: Math.sin(angle) * BULLET_SPEED,
+                life: 5,
+                penetrationLeft: BULLET_MAX_PENETRATION, 
+                isHoming: isHoming || false
+            });
+            player.bullets--;
+        }
+
+        function fireTwoBullets(angle, isHoming) {
+            // 如果子弹&ge;2发，一次发射2颗，否则只发射1颗
+            if (player.bullets >= 2) {
+                fireBullet(angle, isHoming);
+                fireBullet(angle, isHoming);
+            } else {
+                fireBullet(angle, isHoming);
+            }
+        }
+
+        // 懒人模式下，空格发射“追踪弹”
+        function shootHomingBullets() {
+            if (player.bullets <= 0) return;
+            // 追踪弹并不需要鼠标位置。只要让子弹一开始沿任意方向发射即可，
+            // 后续会自动在update中寻怪追踪。
+            // 这里随便用朝右方向 as initial angle
+            let angle = 0;
+            fireTwoBullets(angle, true);
+        }
+
+        function updateBullets() {
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const bullet = bullets[i];
+
+                // 若是追踪弹，则每帧朝最近怪物调整方向
+                if (bullet.isHoming) {
+                    homingBulletAdjust(bullet);
+                }
+
+                // 前进
+                bullet.x += bullet.vx;
+                bullet.y += bullet.vy;
+
+                // 边界反弹
+                if (bullet.x < 0 || bullet.x > canvas.width) {
+                    bullet.vx = -bullet.vx * BULLET_BOUNCE_ACCEL;
+                    bullet.life -= BULLET_LIFE_DECREASE_ON_HIT;
+                }
+                if (bullet.y < 0 || bullet.y > canvas.height) {
+                    bullet.vy = -bullet.vy * BULLET_BOUNCE_ACCEL;
+                    bullet.life -= BULLET_LIFE_DECREASE_ON_HIT;
+                }
+
+                // 若寿命耗尽，则删除并返还弹药
+                if (bullet.life <= 0) {
+                    bullets.splice(i, 1);
+                    player.bullets = Math.min(player.bullets + 1, MAX_BULLETS);
+                }
+            }
+        }
+
+        function drawBullets() {
+            ctx.fillStyle = 'yellow';
+            bullets.forEach((bullet) => {
+                ctx.beginPath();
+                ctx.arc(bullet.x, bullet.y, BULLET_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        // 追踪弹逻辑：寻找最近怪物，稍微转向
+        function homingBulletAdjust(bullet) {
+            if (monsters.length === 0) return; 
+            // 找到最近怪物
+            let nearestDist = Infinity;
+            let target = null;
+            for (let m of monsters) {
+                let dist = Math.hypot(m.x - bullet.x, m.y - bullet.y);
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    target = m;
+                }
+            }
+            if (!target) return;
+
+            // 让子弹朝目标做一个小幅转向(简单做：直接改vx,vy指向该目标)
+            // 为了让追踪感觉平滑，可做一定的插值，但这里直接全量转向
+            const angle = Math.atan2(target.y - bullet.y, target.x - bullet.x);
+            const speed = Math.hypot(bullet.vx, bullet.vy);
+            bullet.vx = Math.cos(angle) * speed;
+            bullet.vy = Math.sin(angle) * speed;
+        }
+
+        // 子弹自动回复
+        function recoverBullets() {
+            if (player.bullets < MAX_BULLETS) {
+                player.bullets += player.level * INITIAL_BULLET_RECOVERY_RATE;
+                if (player.bullets > MAX_BULLETS) {
+                    player.bullets = MAX_BULLETS;
+                }
+            }
+        }
+
+        // ===========================
+        // 怪物相关
+        // ===========================
+        function spawnMonsters() {
+            const numberOfMonsters = Math.floor(baseNumberOfMonsters * Math.pow(monsterSpawnGrowth, player.level));
+
+            for (let i = 0; i < numberOfMonsters; i++) {
+                let x, y, angle, distFromPlayer;
+                const minSafeDist = 200;
+
+                do {
+                    angle = Math.random() * Math.PI * 2;
+                    const randomRadius = canvas.width * 0.5 + Math.random() * (canvas.width * 0.5);
+                    x = player.x + Math.cos(angle) * randomRadius;
+                    y = player.y + Math.sin(angle) * randomRadius;
+                    distFromPlayer = Math.hypot(x - player.x, y - player.y);
+                } while (distFromPlayer < minSafeDist);
+
+                const speed = (Math.random() > 0.5) ? 1 : 2;
+                const health = (speed === 1) ? 2 : 1;
+                const type = (Math.random() < 0.1) ? 3 : ((speed === 1) ? 1 : 2);
+                const monsterSpeed = (type === 3) ? speed * 1.2 : speed;
+
+                monsters.push({
+                    x, y,
+                    vx: -Math.cos(angle) * monsterSpeed,
+                    vy: -Math.sin(angle) * monsterSpeed,
+                    health,
+                    type,
+                    timeToExplode: (type === 3) ? 5000 : null
+                });
+            }
+        }
+
+        function updateMonsters() {
+            for (let i = monsters.length - 1; i >= 0; i--) {
+                const monster = monsters[i];
+
+                // 追踪玩家
+                const dx = player.x - monster.x;
+                const dy = player.y - monster.y;
+                const dist = Math.hypot(dx, dy);
+                const speed = Math.hypot(monster.vx, monster.vy);
+
+                monster.vx = (dx / dist) * speed;
+                monster.vy = (dy / dist) * speed;
+                monster.x += monster.vx * monsterSpeedMultiplier;
+                monster.y += monster.vy * monsterSpeedMultiplier;
+
+                // 检查与玩家碰撞
+                if (checkCollision(player.x, player.y, monster.x, monster.y, player.currentRadius + MONSTER_RADIUS)) {
+                    if (player.invincible) {
+                        // 无敌状态(来自技能1或技能2)：直接秒杀怪物
+                        handleMonsterDeath(monster, i);
+                        continue;
+                    }
+                    if (monster.type === 3) {
+                        explodeMonster(monster);
+                    } else {
+                        spawnHitEffect(player.x, player.y);
+                        player.health--;
+                        checkPlayerHealthForExclamation();
+                        monsters.splice(i, 1);
+                        if (player.health <= 0) {
+                            gameOver();
+                            return;
+                        }
+                    }
+                    continue;
+                }
+
+                // 与子弹碰撞
+                for (let b = bullets.length - 1; b >= 0; b--) {
+                    const bullet = bullets[b];
+                    if (checkCollision(monster.x, monster.y, bullet.x, bullet.y, MONSTER_RADIUS + BULLET_RADIUS)) {
+                        // 若是爆炸怪
+                        if (monster.type === 3) {
+                            explodeMonster(monster);
+                            removeBullet(b);
+                        } else {
+                            monster.health--;
+                            bullet.penetrationLeft--;
+                            // 若子弹已透支，则移除
+                            if (bullet.penetrationLeft < 0) {
+                                removeBullet(b);
+                            }
+                            if (monster.health <= 0) {
+                                handleMonsterDeath(monster, i);
+                            }
+                        }
+                        break; 
+                    }
+                }
+
+                // 爆炸怪物倒计时
+                if (monster.type === 3) {
+                    monster.timeToExplode -= 20;
+                    if (monster.timeToExplode <= 0 
+                     || checkCollision(player.x, player.y, monster.x, monster.y, 100)) {
+                        explodeMonster(monster);
+                    }
+                }
+            }
+        }
+
+        function removeBullet(index) {
+            bullets.splice(index, 1);
+            player.bullets = Math.min(player.bullets + 1, MAX_BULLETS);
+        }
+
+        function drawMonsters() {
+            monsters.forEach((m) => {
+                switch (m.type) {
+                    case 1:
+                        ctx.fillStyle = 'red';
+                        break;
+                    case 2:
+                        ctx.fillStyle = 'green';
+                        break;
+                    case 3:
+                        ctx.fillStyle = 'orange';
+                        break;
+                }
+                ctx.beginPath();
+                ctx.arc(m.x, m.y, MONSTER_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function handleMonsterDeath(monster, i) {
+            player.score++;
+            spawnParticleEffect(monster.x, monster.y);
+            player.health += monster.health * player.lifesteal;
+            if (player.health > player.maxHealth) {
+                player.health = player.maxHealth;
+            }
+
+            // 每30分升级
+            if (player.score % 30 === 0) {
+                player.level++;
+                player.maxHealth += 1; 
+                player.health = player.maxHealth; 
+            }
+
+            // 难度提升
+            if (player.score % DIFFICULTY_INCREASE_RATE === 0) {
+                monsterSpeedMultiplier *= MONSTER_SPEED_GROWTH;
+                monsters.forEach(m => m.health *= 1.2); // 保留稍微血量成长
+            }
+
+            // 卫星怪概率
+            if (Math.random() < 0.02) {
+                monster.orbitAngle = 0;
+                monster.vx = 0;
+                monster.vy = 0;
+                monster.damageDone = 0;
+                orbitingMonsters.push(monster);
+                monsters.splice(i, 1);
+            } else {
+                monsters.splice(i, 1);
+            }
+        }
+
+        // 爆炸怪
+        function explodeMonster(monster) {
+            if (checkCollision(player.x, player.y, monster.x, monster.y, BOMB_EXPLOSION_RADIUS)) {
+                if (!player.invincible) {
+                    spawnHitEffect(player.x, player.y);
+                    player.health--;
+                    checkPlayerHealthForExclamation();
+                    if (player.health <= 0) {
+                        gameOver();
+                    }
+                }
+            }
+            spawnParticleEffect(monster.x, monster.y);
+
+            // 清除爆炸范围内的子弹
+            bullets = bullets.filter(b => {
+                if (checkCollision(b.x, b.y, monster.x, monster.y, BOMB_EXPLOSION_RADIUS)) {
+                    player.bullets = Math.min(player.bullets + 1, MAX_BULLETS);
+                    return false;
+                }
+                return true;
+            });
+            // 清除爆炸范围内的卫星怪
+            orbitingMonsters = orbitingMonsters.filter(orb => {
+                return !checkCollision(orb.x, orb.y, monster.x, monster.y, BOMB_EXPLOSION_RADIUS);
+            });
+
+            const index = monsters.indexOf(monster);
+            if (index !== -1) {
+                monsters.splice(index, 1);
+            }
+        }
+
+        // ===========================
+        // 卫星怪
+        // ===========================
+        function updateOrbitingMonsters() {
+            for (let i = orbitingMonsters.length - 1; i >= 0; i--) {
+                const monster = orbitingMonsters[i];
+                monster.orbitAngle += 0.05;
+                monster.x = player.x + 100 * Math.cos(monster.orbitAngle);
+                monster.y = player.y + 100 * Math.sin(monster.orbitAngle);
+
+                for (let j = monsters.length - 1; j >= 0; j--) {
+                    const otherMonster = monsters[j];
+                    if (checkCollision(monster.x, monster.y, otherMonster.x, otherMonster.y, MONSTER_RADIUS * 2)) {
+                        otherMonster.health -= monster.health;
+                        if (otherMonster.health <= 0) {
+                            player.score++;
+                            spawnParticleEffect(otherMonster.x, otherMonster.y);
+                            monsters.splice(j, 1);
+                        }
+                        monster.damageDone += monster.health;
+                        if (monster.damageDone >= 10) {
+                            orbitingMonsters.splice(i, 1);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        function drawOrbitingMonsters() {
+            orbitingMonsters.forEach((m) => {
+                ctx.fillStyle = 'purple';
+                ctx.beginPath();
+                ctx.arc(m.x, m.y, MONSTER_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        // ===========================
+        // 技能1：无敌护盾 + 移速UP
+        // 按键“1”，LV&ge;1解锁
+        // ===========================
+        function attemptUseSkill1() {
+            if (player.level < 1) return; // 1级以前不解锁
+            if (skill1Cooldown <= 0) {
+                skill1Active = true;
+                skill1EndTime = Date.now() + SKILL1_DURATION;
+                skill1Cooldown = SKILL1_COOLDOWN;
+                // 激活时加速 & 无敌
+                player.invincible = true;
+                player.currentSpeed = player.speed * 2; 
+            }
+        }
+
+        function updateSkill1() {
+            if (!skill1Active) return;
+            if (Date.now() > skill1EndTime) {
+                // 技能结束
+                skill1Active = false;
+                player.invincible = false;
+                player.currentSpeed = player.speed;
+            } else {
+                // 护盾期间：碰到护盾边缘的怪物会被秒杀
+                // 实际做法：和 skill1Barrier 半径 = 80 之类
+                // 这里可随意改大/改小
+                const BARRIER_RADIUS = 80;
+                for (let i = monsters.length - 1; i >= 0; i--) {
+                    const m = monsters[i];
+                    if (checkCollision(player.x, player.y, m.x, m.y, BARRIER_RADIUS + MONSTER_RADIUS)) {
+                        handleMonsterDeath(m, i);
+                    }
+                }
+                for (let i = orbitingMonsters.length - 1; i >= 0; i--) {
+                    const orb = orbitingMonsters[i];
+                    if (checkCollision(player.x, player.y, orb.x, orb.y, BARRIER_RADIUS + MONSTER_RADIUS)) {
+                        orbitingMonsters.splice(i, 1);
+                        player.score++;
+                        spawnParticleEffect(orb.x, orb.y);
+                    }
+                }
+            }
+        }
+
+        function drawSkill1Barrier() {
+            if (!skill1Active) return;
+            const BARRIER_RADIUS = 80;
+            ctx.save();
+            ctx.strokeStyle = 'rgba(0,255,255,0.7)';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, BARRIER_RADIUS, 0, 2 * Math.PI);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // ===========================
+        // 技能2：大变身(无敌+体型5倍+移速&times;2)
+        // 按键“2”，LV&ge;2解锁
+        // ===========================
+        function attemptUseSkill2() {
+            if (player.level < 2) return; // 2级以前不解锁
+            if (skill2Cooldown <= 0) {
+                skill2Active = true;
+                skill2EndTime = Date.now() + SKILL2_DURATION;
+                skill2Cooldown = SKILL2_COOLDOWN;
+                player.invincible = true;
+                player.currentRadius = player.radius * 5;
+                player.currentSpeed = player.speed * 2;
+            }
+        }
+
+        function updateSkill2() {
+            if (!skill2Active) return;
+            if (Date.now() > skill2EndTime) {
+                skill2Active = false;
+                player.invincible = false;
+                player.currentRadius = player.radius;
+                player.currentSpeed = player.speed;
+            }
+        }
+
+        // ===========================
+        // 技能3：龙卷风(吸引怪物)
+        // 按键“3”，LV&ge;3解锁，CD25秒
+        // ===========================
+        function attemptUseSkill3() {
+            if (player.level < 3) return; // 3级以前不解锁
+            if (skill3Cooldown <= 0) {
+                skill3Cooldown = SKILL3_COOLDOWN;
+                // 在玩家当前位置生成一个龙卷风
+                tornadoes.push({
+                    x: player.x,
+                    y: player.y,
+                    startTime: Date.now()
+                });
+            }
+        }
+
+        function updateTornadoes() {
+            if (tornadoes.length === 0) return;
+            // 牵引力 TORNADO_PULL_FORCE
+            for (let t = tornadoes.length - 1; t >= 0; t--) {
+                const tornado = tornadoes[t];
+                const elapsed = Date.now() - tornado.startTime;
+                if (elapsed > TORNADO_DURATION) {
+                    tornadoes.splice(t, 1);
+                    continue;
+                }
+                // 吸引范围可自行调整
+                const TORNADO_RANGE = 300;
+                // 对范围内的怪物施加吸引力
+                for (let i = 0; i < monsters.length; i++) {
+                    const m = monsters[i];
+                    const dx = tornado.x - m.x;
+                    const dy = tornado.y - m.y;
+                    const dist = Math.hypot(dx, dy);
+                    if (dist < TORNADO_RANGE) {
+                        // 施加一个向tornado中心的小力
+                        const force = TORNADO_PULL_FORCE * (1 - dist / TORNADO_RANGE);
+                        m.x += force * dx / dist;
+                        m.y += force * dy / dist;
+                    }
+                }
+            }
+        }
+
+        function drawTornadoes() {
+            tornadoes.forEach(tornado => {
+                // 画一个简易旋转涡
+                const lifeProgress = (Date.now() - tornado.startTime) / TORNADO_DURATION;
+                const alpha = 1 - lifeProgress;
+                ctx.save();
+                ctx.strokeStyle = `rgba(0,150,255,${alpha})`;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(tornado.x, tornado.y, 50, 0, Math.PI*2);
+                ctx.stroke();
+                ctx.restore();
+            });
+        }
+
+        // ===========================
+        // 技能冷却更新
+        // ===========================
+        function updateSkillCooldowns() {
+            // skill1
+            if (skill1Cooldown > 0) {
+                skill1Cooldown -= 20;
+                if (skill1Cooldown < 0) skill1Cooldown = 0;
+            }
+            // skill2
+            if (skill2Cooldown > 0) {
+                skill2Cooldown -= 20;
+                if (skill2Cooldown < 0) skill2Cooldown = 0;
+            }
+            // skill3
+            if (skill3Cooldown > 0) {
+                skill3Cooldown -= 20;
+                if (skill3Cooldown < 0) skill3Cooldown = 0;
+            }
+        }
+
+        // ===========================
+        // 粒子特效
+        // ===========================
+        function spawnParticleEffect(x, y) {
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const angle = Math.random() * 2 * Math.PI;
+                const speed = Math.random() * 3 + 1;
+                particleEffects.push({
+                    x,
+                    y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    life: PARTICLE_LIFESPAN,
+                    color: 'rgba(255,255,0,0.8)'
+                });
+            }
+        }
+        function spawnHitEffect(x, y) {
+            for (let i = 0; i < 10; i++) {
+                const angle = Math.random() * 2 * Math.PI;
+                const speed = Math.random() * 3 + 1;
+                particleEffects.push({
+                    x,
+                    y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    life: PARTICLE_LIFESPAN,
+                    color: 'rgba(255,0,0,0.8)'
+                });
+            }
+        }
+        function updateParticleEffects() {
+            for (let i = particleEffects.length - 1; i >= 0; i--) {
+                const p = particleEffects[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                if (p.life <= 0) {
+                    particleEffects.splice(i, 1);
+                }
+            }
+        }
+        function drawParticleEffects() {
+            particleEffects.forEach((p) => {
+                ctx.fillStyle = p.color || 'rgba(255,255,0,0.8)';
+                ctx.beginPath();
+                const r = Math.max(1, p.life / 10);
+                ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        // ===========================
+        // 道具：药瓶（小概率刷新）
+        // ===========================
+        function spawnPotion() {
+            if (Math.random() < 0.02) {
+                items.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    radius: 10,
+                    type: 'potion'
+                });
+            }
+        }
+        function updateItems() {
+            for (let i = items.length - 1; i >= 0; i--) {
+                const it = items[i];
+                if (checkCollision(player.x, player.y, it.x, it.y, player.currentRadius + it.radius)) {
+                    if (it.type === 'potion') {
+                        player.maxHealth += 1; 
+                        player.health = Math.min(player.health + 2, player.maxHealth);
+                    }
+                    items.splice(i, 1);
+                }
+            }
+        }
+        function drawItems() {
+            items.forEach(it => {
+                if (it.type === 'potion') {
+                    ctx.fillStyle = 'red';
+                    ctx.beginPath();
+                    ctx.arc(it.x, it.y, it.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
+        }
+
+        // ===========================
+        // 当玩家被打到半血 / 残血时，显示“！”
+        // ===========================
+        function checkPlayerHealthForExclamation() {
+            if (player.health <= player.maxHealth / 2 || player.health <= 2) {
+                exclamationEndTime = Date.now() + 1000; 
+            }
+        }
+
+        // ===========================
+        // HUD 绘制
+        // ===========================
+        function drawHUD() {
+            ctx.fillStyle = 'white';
+            ctx.font = '20px Arial';
+            ctx.fillText(`Score: ${player.score}`, 10, 20);
+            ctx.fillText(`Health: ${player.health.toFixed(1)}/${player.maxHealth}`, 10, 40);
+            ctx.fillText(`Level: ${player.level}`, 10, 60);
+            ctx.fillText(`Bullets: ${Math.floor(player.bullets)}`, 10, 80);
+            ctx.fillText(`Lives: ${player.lives}`, 10, 100);
+
+            // 技能1冷却提示
+            const s1Text = (skill1Cooldown > 0) 
+                ? (skill1Cooldown / 1000).toFixed(1) + 's'
+                : 'Ready';
+            ctx.fillText(`Skill1(1) - 护盾+无敌+加速: ${s1Text}`, 10, 140);
+
+            // 技能2冷却提示
+            const s2Text = (skill2Cooldown > 0) 
+                ? (skill2Cooldown / 1000).toFixed(1) + 's'
+                : 'Ready';
+            ctx.fillText(`Skill2(2) - 变大+无敌+撞怪: ${s2Text}`, 10, 165);
+
+            // 技能3冷却提示
+            const s3Text = (skill3Cooldown > 0)
+                ? (skill3Cooldown / 1000).toFixed(1) + 's'
+                : 'Ready';
+            ctx.fillText(`Skill3(3) - 龙卷风吸怪: ${s3Text}`, 10, 190);
+
+            // 仅游戏开局前2秒显示一次提示
+            if (!skillHintDisplayed) {
+                if (Date.now() - skillHintStartTime < 2000) {
+                    ctx.fillText("提示：鼠标左键普通射击，空格(懒人模式)自动追踪弹", 10, 230);
+                } else {
+                    skillHintDisplayed = true;
+                }
+            }
+        }
+
+        // ===========================
+        // 碰撞检测
+        // ===========================
+        function checkCollision(x1, y1, x2, y2, distance) {
+            return Math.hypot(x1 - x2, y1 - y2) < distance;
+        }
+    </script>
+
+    <!-- README：游戏玩法说明与作者信息 -->
+    <script type="text/plain" id="readmeContent">
+【README - 怪物射击游戏】
+
+1. **基本操作**
+   - 方向键 &uarr;&darr;&larr;&rarr; 控制玩家移动；鼠标左键点击发射普通子弹（一次两发）。
+   - 懒人模式下，按空格键可发射“自动追踪怪物”的子弹。
+   - 子弹最多可穿透2个敌人，然后才会消失，仍保留边界反弹。
+
+2. **技能说明**
+   - **Skill1(按1解锁，LV&ge;1)：**  
+     无敌+移动速度翻倍+周围出现护盾圈，碰到圈的怪物会被秒杀。持续3秒，冷却20秒。
+   - **Skill2(按2解锁，LV&ge;2)：**  
+     体型&times;5，移动速度&times;2，无敌，碰到怪物直接撞死。持续5秒，冷却25秒。
+   - **Skill3(按3解锁，LV&ge;3)：**  
+     发射“龙卷风”，持续5秒，范围内的怪物会被吸向龙卷风中心。冷却25秒。
+
+3. **角色成长**
+   - 每杀怪可得分；每30分提升一级，增加最大血量并回满血。
+   - 地图上会小概率刷新红色药瓶（拾取可+2血并+1最大血量）。
+
+4. **其他**
+   - 子弹消失时会自动返还1发弹药；另有少量自动回复机制。
+   - 若玩家血量 &le; 0，则进入死亡界面，可选择复活（生命次数有限）或重新开始游戏。
+
+【祝游戏愉快！】
+    </script>
+</body>
+</html>
