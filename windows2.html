@@ -1,3 +1,22 @@
+# 1. 初步理解
+用户希望在现有的怪物射击游戏代码基础上，**略微增加游戏难度**并**优化UI界面**。  
+为此，我们从以下几个方面进行调整：
+
+1. **游戏难度微调**  
+   - 增加怪物的成长速度。  
+   - 略微降低玩家子弹回复速度。  
+   - 减少初始生命值，使初期容错率略降。  
+   - 其他细节保持不变，以保证整体体验仍可玩。
+
+2. **UI界面优化**  
+   - 调整开始/结束界面样式（如增加阴影、调整背景等）。  
+   - 让交互控件（按钮、选择框）更易于识别。  
+
+下面直接给出**完整修改后**的HTML代码，主要改动部分会在注释中标明。
+
+---
+
+```html
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -12,15 +31,15 @@
             display: block;
             background: #333;
         }
-        /* 美化开始游戏前界面 */
+        /* 优化开始游戏/结束界面UI */
         #preGameScreen, #gameOverScreen {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            /* 简易渐变，增强视觉 */
-            background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), rgba(60, 60, 60, 0.8));
+            /* 增强渐变，并加入半透明效果 */
+            background: linear-gradient(135deg, rgba(0, 0, 50, 0.9), rgba(70, 70, 70, 0.8));
             color: white;
             z-index: 10;
             display: flex;
@@ -28,17 +47,31 @@
             justify-content: center;
             align-items: center;
             text-align: center;
+            /* 新增一点边框与阴影 */
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5) inset;
         }
         #preGameScreen select, #preGameScreen button {
             font-size: 18px;
             margin: 5px;
-            padding: 5px 10px;
+            padding: 6px 12px;
+            border-radius: 4px;
+            border: none;
+        }
+        #gameOverScreen button {
+            font-size: 18px;
+            margin: 5px;
+            padding: 6px 12px;
+            border-radius: 4px;
+            border: none;
         }
         #gameOverScreen {
             display: none;
         }
         #preGameScreen h2 {
             margin-bottom: 10px;
+        }
+        #preGameScreen label {
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -119,16 +152,15 @@
         let skill3Cooldown = 0; 
         // 龙卷风持续时间
         const TORNADO_DURATION = 5000; // 5秒
-        // 龙卷风牵引力(适当调大/调小来控制吸力)
+        // 龙卷风牵引力
         const TORNADO_PULL_FORCE = 0.5;
-        // 每个龙卷风需要记录：x,y,开始时间
 
         // 其他状态
         let skillHintStartTime = 0;  
         let skillHintDisplayed = false; 
         let exclamationEndTime = 0;  // 当血量低时，显示“!”的截止时间（悬停1秒）
         let lazyMode = false;        // 是否为懒人模式
-        let lastMouseX = 0;          // 记录鼠标位置（若需要朝鼠标方向开火等）
+        let lastMouseX = 0;          // 记录鼠标位置
 
         // ===========================
         // 常量 / 参数
@@ -143,25 +175,23 @@
         const BULLET_LIFE_DECREASE_ON_HIT = 1;
         const BULLET_BOUNCE_ACCEL = 1.05;
         const BULLET_RADIUS = 5;
-        // 让子弹可以穿透2个敌人
-        const BULLET_MAX_PENETRATION = 2;
+        const BULLET_MAX_PENETRATION = 2; // 子弹可穿透2个敌人
 
         // 怪物
         const MONSTER_RADIUS = 20;
         const BOMB_EXPLOSION_RADIUS = 40;
 
-        // 刷怪数值
+        // ——【难度调整】：适度加大怪物数量与速度增长
         let monsterSpeedMultiplier = 1;
         const DIFFICULTY_INCREASE_RATE = 20;  // 每多少分提升一次难度
-        // 大幅减少初始数量 & 成长系数
         const baseNumberOfMonsters = 1;
-        const monsterSpawnGrowth = 1.15; // 原先1.2 -> 1.05
+        // 将刷怪增长从1.15提升到1.18，增加压力
+        const monsterSpawnGrowth = 1.18;
+        // 将怪物速度成长从1.15调为1.2
+        const MONSTER_SPEED_GROWTH = 1.2;
 
-        // 提升难度时，怪物移速成长系数从1.2 改为1.1
-        const MONSTER_SPEED_GROWTH = 1.15;
-
-        // 子弹自动回复
-        const INITIAL_BULLET_RECOVERY_RATE = 2.5; // 可以自定义
+        // ——【难度调整】：降低子弹自动回复速率，以减少弹药富余
+        const INITIAL_BULLET_RECOVERY_RATE = 1.5;
 
         // 粒子特效配置
         const PARTICLE_COUNT = 15;
@@ -187,7 +217,6 @@
         restartButton.addEventListener('click', startGame);
         reviveButton.addEventListener('click', revivePlayer);
 
-        // 记录鼠标位置
         window.addEventListener('mousemove', (e) => {
             lastMouseX = e.clientX;
             lastMouseY = e.clientY;
@@ -200,7 +229,7 @@
         window.addEventListener('keydown', (e) => {
             keyState[e.key] = true;
 
-            // 懒人模式下，空格发射“追踪弹”；否则空格不做技能，只在你想加功能时可再扩展。
+            // 懒人模式下，空格发射“追踪弹”
             if (e.key === ' ' || e.key === 'Spacebar') {
                 e.preventDefault();
                 if (lazyMode) {
@@ -208,15 +237,15 @@
                 }
             }
 
-            // 技能1 (按 1) - LV >= 1
+            // 技能1 (按 1)
             if (e.key === '1') {
                 attemptUseSkill1();
             }
-            // 技能2 (按 2) - LV >= 2
+            // 技能2 (按 2)
             if (e.key === '2') {
                 attemptUseSkill2();
             }
-            // 技能3 (按 3) - LV >= 3
+            // 技能3 (按 3)
             if (e.key === '3') {
                 attemptUseSkill3();
             }
@@ -245,8 +274,9 @@
                 speed: BASE_PLAYER_SPEED,
                 currentSpeed: BASE_PLAYER_SPEED,
 
-                health: 5,
-                maxHealth: 5,
+                /* ——【难度调整】：将初始血量改为4（原先5），降低初期容错 */
+                health: 4,
+                maxHealth: 4,
                 score: 0,
                 level: 1,
 
@@ -337,11 +367,11 @@
             updateItems();
             drawItems();
 
-            updateSkill1();  // 护盾
+            updateSkill1();
             drawSkill1Barrier();
 
-            updateSkill2();  // 大变身
-            updateTornadoes(); // 技能3：龙卷风
+            updateSkill2();
+            updateTornadoes();
             drawTornadoes();
 
             updateParticleEffects();
@@ -418,7 +448,7 @@
             }
         }
 
-        // ========== 不同形状的简单绘制函数 ==========
+        // 形状绘制函数
         function drawTriangle(ctx, x, y, r) {
             ctx.beginPath();
             ctx.moveTo(x, y - r);
@@ -546,7 +576,6 @@
         }
 
         function fireTwoBullets(angle, isHoming) {
-            // 如果子弹&ge;2发，一次发射2颗，否则只发射1颗
             if (player.bullets >= 2) {
                 fireBullet(angle, isHoming);
                 fireBullet(angle, isHoming);
@@ -555,12 +584,8 @@
             }
         }
 
-        // 懒人模式下，空格发射“追踪弹”
         function shootHomingBullets() {
             if (player.bullets <= 0) return;
-            // 追踪弹并不需要鼠标位置。只要让子弹一开始沿任意方向发射即可，
-            // 后续会自动在update中寻怪追踪。
-            // 这里随便用朝右方向 as initial angle
             let angle = 0;
             fireTwoBullets(angle, true);
         }
@@ -569,12 +594,10 @@
             for (let i = bullets.length - 1; i >= 0; i--) {
                 const bullet = bullets[i];
 
-                // 若是追踪弹，则每帧朝最近怪物调整方向
                 if (bullet.isHoming) {
                     homingBulletAdjust(bullet);
                 }
 
-                // 前进
                 bullet.x += bullet.vx;
                 bullet.y += bullet.vy;
 
@@ -588,7 +611,7 @@
                     bullet.life -= BULLET_LIFE_DECREASE_ON_HIT;
                 }
 
-                // 若寿命耗尽，则删除并返还弹药
+                // 子弹寿命耗尽
                 if (bullet.life <= 0) {
                     bullets.splice(i, 1);
                     player.bullets = Math.min(player.bullets + 1, MAX_BULLETS);
@@ -605,7 +628,6 @@
             });
         }
 
-        // 追踪弹逻辑：寻找最近怪物，稍微转向
         function homingBulletAdjust(bullet) {
             if (monsters.length === 0) return; 
             // 找到最近怪物
@@ -620,15 +642,13 @@
             }
             if (!target) return;
 
-            // 让子弹朝目标做一个小幅转向(简单做：直接改vx,vy指向该目标)
-            // 为了让追踪感觉平滑，可做一定的插值，但这里直接全量转向
             const angle = Math.atan2(target.y - bullet.y, target.x - bullet.x);
             const speed = Math.hypot(bullet.vx, bullet.vy);
             bullet.vx = Math.cos(angle) * speed;
             bullet.vy = Math.sin(angle) * speed;
         }
 
-        // 子弹自动回复
+        // 每秒自动回复少量子弹
         function recoverBullets() {
             if (player.bullets < MAX_BULLETS) {
                 player.bullets += player.level * INITIAL_BULLET_RECOVERY_RATE;
@@ -687,10 +707,10 @@
                 monster.x += monster.vx * monsterSpeedMultiplier;
                 monster.y += monster.vy * monsterSpeedMultiplier;
 
-                // 检查与玩家碰撞
+                // 与玩家碰撞
                 if (checkCollision(player.x, player.y, monster.x, monster.y, player.currentRadius + MONSTER_RADIUS)) {
                     if (player.invincible) {
-                        // 无敌状态(来自技能1或技能2)：直接秒杀怪物
+                        // 无敌状态：直接秒杀怪物
                         handleMonsterDeath(monster, i);
                         continue;
                     }
@@ -713,14 +733,12 @@
                 for (let b = bullets.length - 1; b >= 0; b--) {
                     const bullet = bullets[b];
                     if (checkCollision(monster.x, monster.y, bullet.x, bullet.y, MONSTER_RADIUS + BULLET_RADIUS)) {
-                        // 若是爆炸怪
                         if (monster.type === 3) {
                             explodeMonster(monster);
                             removeBullet(b);
                         } else {
                             monster.health--;
                             bullet.penetrationLeft--;
-                            // 若子弹已透支，则移除
                             if (bullet.penetrationLeft < 0) {
                                 removeBullet(b);
                             }
@@ -732,7 +750,7 @@
                     }
                 }
 
-                // 爆炸怪物倒计时
+                // 爆炸怪倒计时
                 if (monster.type === 3) {
                     monster.timeToExplode -= 20;
                     if (monster.timeToExplode <= 0 
@@ -785,7 +803,7 @@
             // 难度提升
             if (player.score % DIFFICULTY_INCREASE_RATE === 0) {
                 monsterSpeedMultiplier *= MONSTER_SPEED_GROWTH;
-                monsters.forEach(m => m.health *= 1.2); // 保留稍微血量成长
+                monsters.forEach(m => m.health *= 1.2);
             }
 
             // 卫星怪概率
@@ -801,7 +819,6 @@
             }
         }
 
-        // 爆炸怪
         function explodeMonster(monster) {
             if (checkCollision(player.x, player.y, monster.x, monster.y, BOMB_EXPLOSION_RADIUS)) {
                 if (!player.invincible) {
@@ -815,7 +832,6 @@
             }
             spawnParticleEffect(monster.x, monster.y);
 
-            // 清除爆炸范围内的子弹
             bullets = bullets.filter(b => {
                 if (checkCollision(b.x, b.y, monster.x, monster.y, BOMB_EXPLOSION_RADIUS)) {
                     player.bullets = Math.min(player.bullets + 1, MAX_BULLETS);
@@ -823,7 +839,6 @@
                 }
                 return true;
             });
-            // 清除爆炸范围内的卫星怪
             orbitingMonsters = orbitingMonsters.filter(orb => {
                 return !checkCollision(orb.x, orb.y, monster.x, monster.y, BOMB_EXPLOSION_RADIUS);
             });
@@ -873,16 +888,14 @@
         }
 
         // ===========================
-        // 技能1：无敌护盾 + 移速UP
-        // 按键“1”，LV&ge;1解锁
+        // 技能1：护盾 + 无敌 + 加速
         // ===========================
         function attemptUseSkill1() {
-            if (player.level < 1) return; // 1级以前不解锁
+            if (player.level < 1) return;
             if (skill1Cooldown <= 0) {
                 skill1Active = true;
                 skill1EndTime = Date.now() + SKILL1_DURATION;
                 skill1Cooldown = SKILL1_COOLDOWN;
-                // 激活时加速 & 无敌
                 player.invincible = true;
                 player.currentSpeed = player.speed * 2; 
             }
@@ -891,14 +904,10 @@
         function updateSkill1() {
             if (!skill1Active) return;
             if (Date.now() > skill1EndTime) {
-                // 技能结束
                 skill1Active = false;
                 player.invincible = false;
                 player.currentSpeed = player.speed;
             } else {
-                // 护盾期间：碰到护盾边缘的怪物会被秒杀
-                // 实际做法：和 skill1Barrier 半径 = 80 之类
-                // 这里可随意改大/改小
                 const BARRIER_RADIUS = 80;
                 for (let i = monsters.length - 1; i >= 0; i--) {
                     const m = monsters[i];
@@ -930,11 +939,10 @@
         }
 
         // ===========================
-        // 技能2：大变身(无敌+体型5倍+移速&times;2)
-        // 按键“2”，LV&ge;2解锁
+        // 技能2：大变身
         // ===========================
         function attemptUseSkill2() {
-            if (player.level < 2) return; // 2级以前不解锁
+            if (player.level < 2) return;
             if (skill2Cooldown <= 0) {
                 skill2Active = true;
                 skill2EndTime = Date.now() + SKILL2_DURATION;
@@ -957,13 +965,11 @@
 
         // ===========================
         // 技能3：龙卷风(吸引怪物)
-        // 按键“3”，LV&ge;3解锁，CD25秒
         // ===========================
         function attemptUseSkill3() {
-            if (player.level < 3) return; // 3级以前不解锁
+            if (player.level < 3) return;
             if (skill3Cooldown <= 0) {
                 skill3Cooldown = SKILL3_COOLDOWN;
-                // 在玩家当前位置生成一个龙卷风
                 tornadoes.push({
                     x: player.x,
                     y: player.y,
@@ -974,7 +980,6 @@
 
         function updateTornadoes() {
             if (tornadoes.length === 0) return;
-            // 牵引力 TORNADO_PULL_FORCE
             for (let t = tornadoes.length - 1; t >= 0; t--) {
                 const tornado = tornadoes[t];
                 const elapsed = Date.now() - tornado.startTime;
@@ -982,16 +987,13 @@
                     tornadoes.splice(t, 1);
                     continue;
                 }
-                // 吸引范围可自行调整
                 const TORNADO_RANGE = 300;
-                // 对范围内的怪物施加吸引力
                 for (let i = 0; i < monsters.length; i++) {
                     const m = monsters[i];
                     const dx = tornado.x - m.x;
                     const dy = tornado.y - m.y;
                     const dist = Math.hypot(dx, dy);
                     if (dist < TORNADO_RANGE) {
-                        // 施加一个向tornado中心的小力
                         const force = TORNADO_PULL_FORCE * (1 - dist / TORNADO_RANGE);
                         m.x += force * dx / dist;
                         m.y += force * dy / dist;
@@ -1002,7 +1004,6 @@
 
         function drawTornadoes() {
             tornadoes.forEach(tornado => {
-                // 画一个简易旋转涡
                 const lifeProgress = (Date.now() - tornado.startTime) / TORNADO_DURATION;
                 const alpha = 1 - lifeProgress;
                 ctx.save();
@@ -1019,17 +1020,14 @@
         // 技能冷却更新
         // ===========================
         function updateSkillCooldowns() {
-            // skill1
             if (skill1Cooldown > 0) {
                 skill1Cooldown -= 20;
                 if (skill1Cooldown < 0) skill1Cooldown = 0;
             }
-            // skill2
             if (skill2Cooldown > 0) {
                 skill2Cooldown -= 20;
                 if (skill2Cooldown < 0) skill2Cooldown = 0;
             }
-            // skill3
             if (skill3Cooldown > 0) {
                 skill3Cooldown -= 20;
                 if (skill3Cooldown < 0) skill3Cooldown = 0;
@@ -1089,7 +1087,7 @@
         }
 
         // ===========================
-        // 道具：药瓶（小概率刷新）
+        // 道具：药瓶（小概率）
         // ===========================
         function spawnPotion() {
             if (Math.random() < 0.02) {
@@ -1145,25 +1143,21 @@
             ctx.fillText(`Bullets: ${Math.floor(player.bullets)}`, 10, 80);
             ctx.fillText(`Lives: ${player.lives}`, 10, 100);
 
-            // 技能1冷却提示
             const s1Text = (skill1Cooldown > 0) 
                 ? (skill1Cooldown / 1000).toFixed(1) + 's'
                 : 'Ready';
             ctx.fillText(`Skill1(1) - 护盾+无敌+加速: ${s1Text}`, 10, 140);
 
-            // 技能2冷却提示
             const s2Text = (skill2Cooldown > 0) 
                 ? (skill2Cooldown / 1000).toFixed(1) + 's'
                 : 'Ready';
             ctx.fillText(`Skill2(2) - 变大+无敌+撞怪: ${s2Text}`, 10, 165);
 
-            // 技能3冷却提示
             const s3Text = (skill3Cooldown > 0)
                 ? (skill3Cooldown / 1000).toFixed(1) + 's'
                 : 'Ready';
             ctx.fillText(`Skill3(3) - 龙卷风吸怪: ${s3Text}`, 10, 190);
 
-            // 仅游戏开局前2秒显示一次提示
             if (!skillHintDisplayed) {
                 if (Date.now() - skillHintStartTime < 2000) {
                     ctx.fillText("提示：鼠标左键普通射击，空格(懒人模式)自动追踪弹", 10, 230);
@@ -1191,11 +1185,11 @@
    - 子弹最多可穿透2个敌人，然后才会消失，仍保留边界反弹。
 
 2. **技能说明**
-   - **Skill1(按1解锁，LV&ge;1)：**  
+   - **Skill1(按1解锁，LV≥1)：**  
      无敌+移动速度翻倍+周围出现护盾圈，碰到圈的怪物会被秒杀。持续3秒，冷却20秒。
-   - **Skill2(按2解锁，LV&ge;2)：**  
-     体型&times;5，移动速度&times;2，无敌，碰到怪物直接撞死。持续5秒，冷却25秒。
-   - **Skill3(按3解锁，LV&ge;3)：**  
+   - **Skill2(按2解锁，LV≥2)：**  
+     体型×5，移动速度×2，无敌，碰到怪物直接撞死。持续5秒，冷却25秒。
+   - **Skill3(按3解锁，LV≥3)：**  
      发射“龙卷风”，持续5秒，范围内的怪物会被吸向龙卷风中心。冷却25秒。
 
 3. **角色成长**
@@ -1204,7 +1198,7 @@
 
 4. **其他**
    - 子弹消失时会自动返还1发弹药；另有少量自动回复机制。
-   - 若玩家血量 &le; 0，则进入死亡界面，可选择复活（生命次数有限）或重新开始游戏。
+   - 若玩家血量≤0，则进入死亡界面，可选择复活（生命次数有限）或重新开始游戏。
 
 【祝游戏愉快！】
     </script>
